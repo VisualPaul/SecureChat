@@ -33,4 +33,9 @@ public class User implements Serializable {
         User other = (User)o;
         return other.id == this.id;
     }
+
+    @Override
+    public int hashCode() {
+        return Integer.hashCode(this.id);
+    }
 }

@@ -1,9 +1,6 @@
 package ru.hse.securechat.server;
 
-import ru.hse.securechat.LoginRequest;
-import ru.hse.securechat.Message;
-import ru.hse.securechat.ProtocolConstants;
-import ru.hse.securechat.RegisterRequest;
+import ru.hse.securechat.*;
 
 import javax.crypto.Cipher;
 import java.io.*;
@@ -12,12 +9,14 @@ import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.sql.*;
 import java.util.Arrays;
+import java.util.HashMap;
 
 public class UserConnection extends Thread{
     private Socket socket;
 
     private ObjectInputStream in;
     private ObjectOutputStream out;
+    private static final HashMap<User, UserConnection> connections = new HashMap<>();
 
     public UserConnection(Socket socket) {
         this.socket = socket;
@@ -29,13 +28,56 @@ public class UserConnection extends Thread{
         try {
             out = new ObjectOutputStream(socket.getOutputStream());
             in = new ObjectInputStream(socket.getInputStream());
-            User user = authenticate();
-            if (user == null) {
-                System.out.println("returned null!");
-            } else {
-                System.out.printf("hello, %s\n", user.getName());
+            User currentUser = authenticate();
+            if (currentUser == null)
+                return;
+            try {
+                synchronized(connections) {
+                    connections.put(currentUser, this);
+                }
+                for (;;) {
+                    int code = in.read();
+                    if (code == -1) {
+                        break;
+                    } else if (code == AddUserRequest.CODE) {
+                        AddUserRequest req = (AddUserRequest)in.readObject();
+                        User user = Users.getInstance().getUser(req.getUserName());
+                        if (user == null) {
+                            sendAddUserResponse(new AddUserResponse(req.getMessageCode(), AddUserResponse.NO_USER, null));
+                        } else {
+                            sendAddUserResponse(new AddUserResponse(
+                                    req.getMessageCode(), AddUserResponse.OK, user.getPublicKey()
+                            ));
+                        }
+                    } else if (code == UserMessageSendRequest.CODE) {
+                        UserMessageSendRequest req = (UserMessageSendRequest)in.readObject();
+                        User to = Users.getInstance().getUser(req.getTo());
+                        if (to == null) {
+                            sendUserMessageSendResponse(new UserMessageSendResponse(req.getCode(),
+                                    UserMessageSendResponse.NO_USER));
+                            continue;
+                        }
+                        UserConnection otherConnection;
+                        synchronized (connections) {
+                            otherConnection = connections.get(to);
+                        }
+                        if (otherConnection == null) {
+                            sendUserMessageSendResponse(new UserMessageSendResponse(req.getCode(),
+                                    UserMessageSendResponse.USER_OFFLINE));
+                            continue;
+                        }
+                        otherConnection.sendMessage(new UserMessage(currentUser.getName(), req.getMessage()));
+                        sendUserMessageSendResponse(new UserMessageSendResponse(req.getCode(),
+                                UserMessageSendResponse.OK));
+                    }
+                }
+            } finally {
+                synchronized (connections) {
+                    connections.remove(currentUser);
+                }
             }
-        } catch (IOException e) {
+
+        } catch (IOException | ClassNotFoundException | ClassCastException e) {
             System.out.println("i/o error:");
             e.printStackTrace();
         } catch (UnknownCodeException e) {
@@ -57,17 +99,28 @@ public class UserConnection extends Thread{
         }
     }
 
-    public synchronized boolean sendMessage(Message message){
+    private synchronized void sendUserMessageSendResponse(UserMessageSendResponse userMessageSendResponse)
+            throws IOException{
+        out.write(UserMessageSendResponse.CODE);
+        out.writeObject(userMessageSendResponse);
+    }
+
+    public synchronized boolean sendMessage(UserMessage userMessage){
         try {
-            out.write(Message.CODE);
-            out.writeObject(message);
+            out.write(UserMessage.CODE);
+            out.writeObject(userMessage);
             return true;
         } catch (IOException e) {
             return false;
         }
     }
 
-    private synchronized User authenticate() throws IOException, IncorrectRequest, SQLException {
+    private synchronized void sendAddUserResponse(AddUserResponse response) throws IOException {
+        out.write(AddUserResponse.CODE);
+        out.writeObject(response);
+    }
+
+    private User authenticate() throws IOException, IncorrectRequest, SQLException {
         try {
             int code = in.read();
             Users users = Users.getInstance();
