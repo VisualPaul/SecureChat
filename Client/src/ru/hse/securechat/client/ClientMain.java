@@ -3,18 +3,14 @@ package ru.hse.securechat.client;
 import ru.hse.securechat.*;
 
 import javax.crypto.Cipher;
-import javax.crypto.NoSuchPaddingException;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.Socket;
 import java.security.*;
-import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Scanner;
 
 public class ClientMain {
@@ -27,9 +23,19 @@ public class ClientMain {
         return socket;
     }
     public static void main(String[] args) {
+        String serverAddress;
+        if (args.length == 0) {
+            serverAddress = "localhost";
+        } else if (args.length == 1) {
+            serverAddress = args[0];
+        } else {
+            System.err.println("incorrect argument format");
+            System.exit(1);
+            return;
+        }
         try {
             Class.forName("org.sqlite.JDBC");
-            socket = new Socket("localhost", ProtocolConstants.PORT);
+            socket = new Socket(serverAddress, ProtocolConstants.PORT);
             in = new ObjectInputStream(socket.getInputStream());
             out = new ObjectOutputStream(socket.getOutputStream());
             interact();
